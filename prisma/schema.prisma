@@ -1,0 +1,593 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============== USERS & AUTH ==============
+
+model Track {
+  id          String  @id @default(uuid())
+  slug        String  @unique // e.g., "frontend", "backend"
+  name        String  // e.g., "Frontend Developer"
+  description String?
+  imageUrl    String?
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("tracks")
+}
+
+model BadgeDefinition {
+  id          String  @id @default(uuid())
+  name        String  @unique // e.g., "JavaScript Proficient"
+  description String?
+  imageUrl    String?
+  criteria    Json    // { type: "quiz_score", topic: "JavaScript", minScore: 75 } or { type: "streak", days: 30 }
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("badge_definitions")
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  RECRUITER
+  TUTOR
+}
+
+enum LearningStyle {
+  VISUAL
+  READING
+  HANDS_ON
+}
+
+enum ExperienceLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+model User {
+  id              String          @id @default(uuid())
+  email           String          @unique
+  password        String
+  firstName       String
+  lastName        String
+  avatar          String?         // profile picture URL
+  role            Role            @default(STUDENT)
+  isActive        Boolean         @default(true)
+
+  // Password reset
+  resetToken      String?         @unique
+  resetTokenExpiry DateTime?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Student-specific onboarding
+  profile         StudentProfile?
+
+  // Assessment attempts
+  assessmentAttempts AssessmentAttempt[]
+
+  // Practice sessions
+  practiceSessions PracticeSession[]
+
+  // Recruiter shortlists
+  shortlists      Shortlist[]
+
+  // Lesson progress
+  lessonProgress  LessonProgress[]
+
+  // Topic enrollments
+  topicEnrollments TopicEnrollment[]
+
+  // Bookmarks
+  courseBookmarks  CourseBookmark[]
+
+  // Tutor assignments
+  tutorCourses    CourseTutor[] @relation("TutorCourses")
+
+  // Chat
+  conversationsAsOne Conversation[] @relation("ConversationsAsOne")
+  conversationsAsTwo Conversation[] @relation("ConversationsAsTwo")
+  sentMessages       Message[]      @relation("SentMessages")
+
+  // Assignments
+  createdAssignments  Assignment[]  @relation("CreatedAssignments")
+  studentSubmissions  Submission[]  @relation("StudentSubmissions")
+  reviewedSubmissions Submission[]  @relation("ReviewedSubmissions")
+
+  // Certificates
+  courseCertificates  CourseCertificate[]
+
+  @@map("users")
+}
+
+model StudentProfile {
+  id              String          @id @default(uuid())
+  userId          String          @unique
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Onboarding data
+  goal            String          // e.g., "Frontend Developer", "Backend Developer"
+  trackSlug       String?         // links to Track.slug — assigned on onboarding
+  experienceLevel ExperienceLevel @default(BEGINNER)
+  learningStyle   LearningStyle   @default(VISUAL)
+  weeklyHours     Int             @default(10)
+
+  // Gamification
+  xp              Int             @default(0)
+  level           Int             @default(1)
+
+  // AI-generated content (stored after assessment)
+  aiSkillReport       String?     @db.Text
+  aiLearningPath      Json?
+  aiCheatSheet        String?     @db.Text
+  aiRecommendations   Json?
+
+  // Visibility
+  isVisibleToRecruiters Boolean   @default(false)
+
+  // Badges
+  badges          Badge[]
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@map("student_profiles")
+}
+
+// ============== ASSESSMENTS ==============
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+model Topic {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  description String?
+  imageUrl    String?    // uploaded image URL
+  track       String?    // e.g., "frontend", "backend"
+  coverImage  String?    // topic banner image URL
+
+  // Hierarchy: parent-child relationship
+  parentId    String?
+  parent      Topic?     @relation("TopicHierarchy", fields: [parentId], references: [id])
+  children    Topic[]    @relation("TopicHierarchy")
+
+  questions   Question[]
+  resources   Resource[]
+  lessons     Lesson[]
+  enrollments TopicEnrollment[]
+  bookmarks   CourseBookmark[]
+  tutors      CourseTutor[]
+  assignments Assignment[]
+  certificates CourseCertificate[]
+  isSequential Boolean @default(true)
+  minQuizScore Float   @default(60) // minimum avg quiz % to earn certificate
+  createdAt   DateTime   @default(now())
+
+  @@map("topics")
+}
+
+model TopicEnrollment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId   String
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  enrolledAt DateTime @default(now())
+
+  @@unique([userId, topicId])
+  @@map("topic_enrollments")
+}
+
+model CourseBookmark {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId   String
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, topicId])
+  @@map("course_bookmarks")
+}
+
+model CourseTutor {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation("TutorCourses", fields: [userId], references: [id], onDelete: Cascade)
+  topicId   String
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+
+  @@unique([userId, topicId])
+  @@map("course_tutors")
+}
+
+// ============== LESSONS (Learning Content) ==============
+
+enum ContentBlockType {
+  TEXT
+  VIDEO
+  CODE
+  IMAGE
+  RESOURCE_LINK
+  PROJECT
+}
+
+model Lesson {
+  id          String   @id @default(uuid())
+  topicId     String
+  topic       Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  title       String   // e.g., "Variables & Data Types"
+  description String?
+  order       Int      @default(0) // sequence within the topic
+  isPublished Boolean  @default(false)
+  duration    Int?     // estimated minutes to complete
+  isProject   Boolean  @default(false) // true = this lesson is a project/assignment
+
+  // Content blocks (the actual lesson material)
+  contentBlocks ContentBlock[]
+
+  // Follow-up questions for this lesson
+  questions   LessonQuestion[]
+
+  // Track student progress
+  progress    LessonProgress[]
+
+  // Assignments linked to this lesson
+  assignments Assignment[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([topicId, order])
+  @@map("lessons")
+}
+
+model ContentBlock {
+  id        String           @id @default(uuid())
+  lessonId  String
+  lesson    Lesson           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  type      ContentBlockType @default(TEXT)
+  order     Int              @default(0) // sequence within the lesson
+  title     String?          // block title (e.g., "Watch: Intro to Variables")
+  content   String           @db.Text // markdown text, video URL, code snippet, image URL, or resource link
+  overview  String?          @db.Text // text overview/description for videos and resources
+  metadata  Json?            // extra data: { language, duration, provider, source, etc. }
+
+  // Questions attached to this specific content block
+  questions ContentBlockQuestion[]
+
+  createdAt DateTime         @default(now())
+
+  @@map("content_blocks")
+}
+
+model ContentBlockQuestion {
+  id          String     @id @default(uuid())
+  blockId     String
+  block       ContentBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  order       Int        @default(0)
+  difficulty  Difficulty @default(MEDIUM)
+  text        String     @db.Text
+  options     Json       // Array of { id, text, isCorrect }
+  explanation String?    @db.Text
+  points      Int        @default(10)
+  createdAt   DateTime   @default(now())
+
+  @@map("content_block_questions")
+}
+
+model LessonQuestion {
+  id          String     @id @default(uuid())
+  lessonId    String
+  lesson      Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  order       Int        @default(0)
+  difficulty  Difficulty @default(MEDIUM)
+  text        String     @db.Text
+  options     Json       // Array of { id, text, isCorrect }
+  explanation String?    @db.Text
+  points      Int        @default(10)
+  createdAt   DateTime   @default(now())
+
+  @@map("lesson_questions")
+}
+
+model LessonProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId    String
+  lesson      Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completed   Boolean   @default(false)
+  score       Float?    // percentage on lesson questions
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, lessonId])
+  @@map("lesson_progress")
+}
+
+model Question {
+  id          String     @id @default(uuid())
+  topicId     String
+  topic       Topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  difficulty  Difficulty @default(MEDIUM)
+  text        String     @db.Text
+  options     Json       // Array of { id, text, isCorrect }
+  explanation String?    @db.Text
+  points      Int        @default(10)
+  timeLimit   Int?       // seconds per question (optional)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  answers     AnswerRecord[]
+
+  @@map("questions")
+}
+
+model AssessmentConfig {
+  id              String   @id @default(uuid())
+  name            String   // e.g., "Frontend Developer Assessment"
+  description     String?
+  track           String?  // e.g., "frontend", "backend", "cybersecurity", "data-science", "ui-ux", "devops"
+  difficulty      Difficulty? // Overall difficulty level of this config (null = mixed)
+  totalQuestions   Int      @default(20)
+  timeLimitMinutes Int     @default(25)
+  isBoothMode     Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  topicDistribution Json?  // e.g., { "topicId": numberOfQuestions }
+  difficultyDistribution Json? // e.g., { "EASY": 5, "MEDIUM": 10, "HARD": 5 }
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  attempts        AssessmentAttempt[]
+
+  @@map("assessment_configs")
+}
+
+model AssessmentAttempt {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  configId        String
+  config          AssessmentConfig @relation(fields: [configId], references: [id])
+
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+  totalScore      Float?
+  maxScore        Float?
+  percentageScore Float?
+
+  // Score breakdown by topic
+  topicScores     Json?    // { topicId: { correct, total, percentage } }
+
+  // AI-generated report for this attempt
+  aiReport        String?  @db.Text
+
+  answers         AnswerRecord[]
+
+  @@map("assessment_attempts")
+}
+
+model AnswerRecord {
+  id          String   @id @default(uuid())
+  attemptId   String
+  attempt     AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId  String
+  question    Question @relation(fields: [questionId], references: [id])
+  selectedOption String?
+  isCorrect   Boolean  @default(false)
+  timeTaken   Int?     // seconds
+  createdAt   DateTime @default(now())
+
+  @@map("answer_records")
+}
+
+// ============== PRACTICE MODE ==============
+
+model PracticeSession {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId     String
+  totalQuestions Int
+  correctAnswers Int   @default(0)
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@map("practice_sessions")
+}
+
+// ============== RESOURCES ==============
+
+enum ResourceType {
+  VIDEO
+  ARTICLE
+  EXERCISE
+  DOCUMENTATION
+  TUTORIAL
+}
+
+model Resource {
+  id          String       @id @default(uuid())
+  topicId     String
+  topic       Topic        @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  title       String
+  url         String
+  type        ResourceType @default(ARTICLE)
+  difficulty  Difficulty   @default(MEDIUM)
+  learningStyle LearningStyle? // null means suitable for all
+  description String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+
+  @@map("resources")
+}
+
+// ============== GAMIFICATION ==============
+
+model Badge {
+  id          String   @id @default(uuid())
+  name        String   // e.g., "JavaScript Proficient"
+  description String?
+  imageUrl    String?
+  topicId     String?  // null = general badge
+  minScore    Float?   // minimum percentage to earn
+  profileId   String
+  profile     StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  earnedAt    DateTime @default(now())
+
+  @@map("badges")
+}
+
+// ============== CHAT / MESSAGING ==============
+
+model Conversation {
+  id          String    @id @default(uuid())
+  participantOneId String
+  participantTwoId String
+  participantOne   User  @relation("ConversationsAsOne", fields: [participantOneId], references: [id], onDelete: Cascade)
+  participantTwo   User  @relation("ConversationsAsTwo", fields: [participantTwoId], references: [id], onDelete: Cascade)
+  lastMessageAt    DateTime?
+  messages    Message[]
+  createdAt   DateTime  @default(now())
+
+  @@unique([participantOneId, participantTwoId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
+  content        String       @db.Text
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@map("messages")
+}
+
+// ============== COURSE CERTIFICATES ==============
+
+model CourseCertificate {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId       String
+  topic         Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  // Criteria snapshot at time of issue
+  lessonsCompleted   Int
+  totalLessons       Int
+  projectsApproved   Int
+  totalProjects      Int
+  averageQuizScore   Float
+  overallGrade       String?  // A, B, C, etc.
+
+  certificateId      String   @unique // e.g., "ETS-CERT-JS-A1B2C3"
+  issuedAt           DateTime @default(now())
+
+  @@unique([userId, topicId])
+  @@map("course_certificates")
+}
+
+// ============== ASSIGNMENTS / PROJECTS ==============
+
+enum AssignmentType {
+  PROJECT
+  EXERCISE
+  QUIZ
+}
+
+enum SubmissionStatus {
+  PENDING
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  RESUBMIT
+}
+
+model Assignment {
+  id          String         @id @default(uuid())
+  topicId     String         // which course this belongs to
+  topic       Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  lessonId    String?        // optionally tied to a specific lesson
+  lesson      Lesson?        @relation(fields: [lessonId], references: [id])
+  createdById String         // tutor or admin who created it
+  createdBy   User           @relation("CreatedAssignments", fields: [createdById], references: [id])
+
+  title       String
+  description String         @db.Text   // markdown brief
+  type        AssignmentType @default(PROJECT)
+  dueDate     DateTime?
+  points      Int            @default(100)
+  isPublished Boolean        @default(true)
+
+  // What to submit
+  requiresLink    Boolean    @default(true)  // GitHub/live URL
+  requiresFile    Boolean    @default(false) // file upload
+  requiresText    Boolean    @default(false) // written explanation
+
+  submissions     Submission[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("assignments")
+}
+
+model Submission {
+  id            String           @id @default(uuid())
+  assignmentId  String
+  assignment    Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       User             @relation("StudentSubmissions", fields: [studentId], references: [id])
+
+  status        SubmissionStatus @default(SUBMITTED)
+  link          String?          // project URL / GitHub link
+  files         Json?            // Array of { url, fileName, fileType, fileSize }
+  text          String?          @db.Text // written explanation
+
+  // Tutor review
+  score         Float?           // 0-100
+  feedback      String?          @db.Text
+  reviewedById  String?
+  reviewedBy    User?            @relation("ReviewedSubmissions", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+
+  submittedAt   DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([assignmentId, studentId])
+  @@map("submissions")
+}
+
+// ============== RECRUITER ==============
+
+model Shortlist {
+  id          String   @id @default(uuid())
+  recruiterId String
+  recruiter   User     @relation(fields: [recruiterId], references: [id], onDelete: Cascade)
+  studentId   String
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([recruiterId, studentId])
+  @@map("shortlists")
+}
