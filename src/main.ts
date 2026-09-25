@@ -14,9 +14,13 @@ async function bootstrap() {
   // Serve uploaded files statically
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-  // Enable CORS
+  // Enable CORS — supports multiple origins via comma-separated FRONTEND_URL
+  const rawOrigins = process.env.FRONTEND_URL || '*';
+  const allowedOrigins =
+    rawOrigins === '*' ? '*' : rawOrigins.split(',').map((o) => o.trim());
+
   app.enableCors({
-    origin: process.env.FRONTEND_URL || '*',
+    origin: allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
