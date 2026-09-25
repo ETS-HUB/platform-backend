@@ -1,10 +1,13 @@
 import {
   Controller,
   Post,
+  Get,
   Body,
   HttpCode,
   HttpStatus,
   UseGuards,
+  Req,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -13,6 +16,7 @@ import {
   ApiResponse,
   ApiBody,
 } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import {
   RegisterDto,
@@ -163,5 +167,32 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
   ) {
     return this.authService.changePassword(userId, dto);
+  }
+
+  // ============== GOOGLE OAUTH ==============
+
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Redirect to Google OAuth login' })
+  async googleAuth() {
+    // Passport handles the redirect
+  }
+
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({
+    summary: 'Google OAuth callback — redirects to frontend with token',
+  })
+  async googleCallback(@Req() req: any, @Res() res: any) {
+    const result = await this.authService.googleAuth(req.user);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+
+    // Redirect to frontend with token and onboarding info
+    const params = new URLSearchParams({
+      token: result.accessToken,
+      nextStep: result.onboarding.nextStep,
+    });
+
+    res.redirect(`${frontendUrl}/auth/callback?${params.toString()}`);
   }
 }

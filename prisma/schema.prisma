@@ -55,12 +55,15 @@ enum ExperienceLevel {
 model User {
   id              String          @id @default(uuid())
   email           String          @unique
-  password        String
+  password        String?         // nullable for OAuth users
   firstName       String
   lastName        String
   avatar          String?         // profile picture URL
   role            Role            @default(STUDENT)
   isActive        Boolean         @default(true)
+
+  // OAuth
+  googleId        String?         @unique
 
   // Password reset
   resetToken      String?         @unique

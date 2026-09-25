@@ -97,6 +97,12 @@ export class AuthService {
       throw new UnauthorizedException('Account has been deactivated');
     }
 
+    if (!user.password) {
+      throw new UnauthorizedException(
+        'This account uses Google sign-in. Please sign in with Google.',
+      );
+    }
+
     const passwordValid = await bcrypt.compare(dto.password, user.password);
 
     if (!passwordValid) {
@@ -265,7 +271,7 @@ export class AuthService {
 
     const passwordValid = await bcrypt.compare(
       dto.currentPassword,
-      user.password,
+      user.password ?? '',
     );
 
     if (!passwordValid) {
@@ -280,6 +286,106 @@ export class AuthService {
     });
 
     return { message: 'Password changed successfully' };
+  }
+
+  async googleAuth(googleUser: {
+    googleId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    avatar?: string;
+  }) {
+    // Find existing user by googleId or email
+    let user = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ googleId: googleUser.googleId }, { email: googleUser.email }],
+      },
+      include: {
+        profile: { select: { id: true } },
+        assessmentAttempts: {
+          where: { completedAt: { not: null } },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+
+    const isNewUser = !user;
+
+    if (!user) {
+      // Create new user
+      user = await this.prisma.user.create({
+        data: {
+          email: googleUser.email,
+          firstName: googleUser.firstName,
+          lastName: googleUser.lastName,
+          avatar: googleUser.avatar,
+          googleId: googleUser.googleId,
+          role: Role.STUDENT,
+          // password is null for OAuth users
+        },
+        include: {
+          profile: { select: { id: true } },
+          assessmentAttempts: {
+            where: { completedAt: { not: null } },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      });
+
+      // Send welcome email
+      this.mailService
+        .sendWelcomeEmail(user.email, user.firstName)
+        .catch(() => {});
+    } else if (!user.googleId) {
+      // Existing email user — link their Google account
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          googleId: googleUser.googleId,
+          avatar: user.avatar || googleUser.avatar,
+        },
+        include: {
+          profile: { select: { id: true } },
+          assessmentAttempts: {
+            where: { completedAt: { not: null } },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      });
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('Account has been deactivated');
+    }
+
+    const token = this.generateToken(user.id, user.email, user.role);
+    const hasProfile = !!user.profile;
+    const hasCompletedAssessment = user.assessmentAttempts.length > 0;
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        avatar: user.avatar,
+      },
+      accessToken: token,
+      onboarding: {
+        isFirstLogin: isNewUser,
+        hasProfile,
+        hasCompletedAssessment,
+        nextStep: !hasProfile
+          ? 'onboarding'
+          : !hasCompletedAssessment
+            ? 'assessment'
+            : 'dashboard',
+      },
+    };
   }
 
   private generateToken(userId: string, email: string, role: Role): string {
