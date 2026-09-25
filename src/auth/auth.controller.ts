@@ -173,7 +173,9 @@ export class AuthController {
 
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Redirect to Google OAuth login' })
+  @ApiOperation({
+    summary: 'Redirect to Google OAuth login (browser redirect flow)',
+  })
   async googleAuth() {
     // Passport handles the redirect
   }
@@ -187,12 +189,50 @@ export class AuthController {
     const result = await this.authService.googleAuth(req.user);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
 
-    // Redirect to frontend with token and onboarding info
     const params = new URLSearchParams({
       token: result.accessToken,
       nextStep: result.onboarding.nextStep,
     });
 
     res.redirect(`${frontendUrl}/auth/callback?${params.toString()}`);
+  }
+
+  @Post('social/google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Sign in with Google — accepts Google user profile from frontend OAuth flow',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        user: {
+          id: 'uuid',
+          email: 'user@gmail.com',
+          firstName: 'John',
+          lastName: 'Doe',
+          role: 'STUDENT',
+        },
+        accessToken: 'eyJ...',
+        onboarding: {
+          isFirstLogin: true,
+          hasProfile: false,
+          nextStep: 'onboarding',
+        },
+      },
+    },
+  })
+  async googleSocialLogin(
+    @Body()
+    body: {
+      googleId: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      avatar?: string;
+    },
+  ) {
+    return this.authService.googleAuth(body);
   }
 }
